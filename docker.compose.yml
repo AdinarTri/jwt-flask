@@ -1,0 +1,33 @@
+version: '3.8'
+services:
+auth:
+build: ./auth_service
+environment:
+- JWT_SECRET=${JWT_SECRET}
+- JWT_ALGORITHM=${JWT_ALGORITHM}
+- JWT_EXP_SECONDS=${JWT_EXP_SECONDS}
+ports:
+- "5000:5000"
+user:
+build: ./user_service
+environment:
+- JWT_SECRET=${JWT_SECRET}
+- JWT_ALGORITHM=${JWT_ALGORITHM}
+ports:
+- "5001:5001"
+product:
+build: ./product_service
+environment:
+- JWT_SECRET=${JWT_SECRET}
+- JWT_ALGORITHM=${JWT_ALGORITHM}
+ports:
+- "5002:5002"
+order:
+build: ./order_service
+environment:
+- JWT_SECRET=${JWT_SECRET}
+- JWT_ALGORITHM=${JWT_ALGORITHM}
+- USER_SERVICE_URL=http://user:5001
+- PRODUCT_SERVICE_URL=http://product:5002
+ports:
+- "5003:5003"
