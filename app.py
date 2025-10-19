@@ -1,98 +1,71 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify, make_response
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, jsonify, request, render_template
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
-import jwt
-import uuid
-from datetime import datetime, timezone, timedelta
-from functools import wraps
+import os
 
 app = Flask(__name__)
+# Menggunakan environment variable untuk secret key jika ada, jika tidak pakai default
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "rivaldo_100") 
+jwt = JWTManager(app)
 
-# Configuration
-app.config['SECRET_KEY'] = 'your_secret_key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///Database.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+users = {
+    "user1": {
+        "password": generate_password_hash("password123"), 
+        "profile": {
+            "name": "Aleks",
+            "email": "pertamina@example.com",
+            "role": "user"
+        }
+    },
+    "admin1": {
+        "password": generate_password_hash("adminpass123"),
+        "profile": {
+            "name": "Bob",
+            "email": "bob@example.com",
+            "role": "admin"
+        }
+    }
+}
 
-# Database setup
-db = SQLAlchemy(app)
+# --- API Endpoints ---
 
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    public_id = db.Column(db.String(50), unique=True)
-    name = db.Column(db.String(100))
-    email = db.Column(db.String(70), unique=True)
-    password = db.Column(db.String(80))
-
-# Token required decorator
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = request.cookies.get('jwt_token')
-
-        if not token:
-            return jsonify({'message': 'Token is missing!'}), 401
-
-        try:
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-            current_user = User.query.filter_by(public_id=data['public_id']).first()
-        except:
-            return jsonify({'message': 'Token is invalid!'}), 401
-
-        return f(current_user, *args, **kwargs)
-
-    return decorated
-
-@app.route('/')
-def home():
-    return render_template('login.html')
-
-@app.route('/login', methods=['GET', 'POST'])
+@app.route("/login", methods=["POST"])
 def login():
-    if request.method == 'POST':
-        email = request.form['email']
-        password = request.form['password']
-        user = User.query.filter_by(email=email).first()
+    data = request.get_json()
+    if not data:
+        return jsonify({"msg": "Missing JSON in request"}), 400
+        
+    username = data.get("username", None)
+    password = data.get("password", None)
 
-        if not user or not check_password_hash(user.password, password):
-            return jsonify({'message': 'Invalid email or password'}), 401
+    user = users.get(username, None)
+    if not user or not check_password_hash(user["password"], password):
+        return jsonify({"msg": "Bad username or password"}), 401
+    
+    access_token = create_access_token(identity=username)
+    return jsonify(access_token=access_token), 200
 
-        token = jwt.encode({'public_id': user.public_id, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)}, 
-                           app.config['SECRET_KEY'], algorithm="HS256")
+@app.route("/profile", methods=["GET"])
+@jwt_required()
+def profile():
+    current_user_username = get_jwt_identity()
+    user = users.get(current_user_username, None)
 
-        response = make_response(redirect(url_for('dashboard')))
-        response.set_cookie('jwt_token', token)
+    if not user:
+        return jsonify({"msg": "User not found"}), 404
 
-        return response
+    return jsonify(logged_in_as=current_user_username, profile=user["profile"]), 200
 
-    return render_template('login.html')
+# --- Frontend Routes ---
 
-@app.route('/signup', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        name = request.form['name']
-        email = request.form['email']
-        password = request.form['password']
+@app.route("/")
+def home():
+    """Menampilkan halaman utama (dashboard UI)."""
+    return render_template("dashboard.html")
 
-        existing_user = User.query.filter_by(email=email).first()
-        if existing_user:
-            return jsonify({'message': 'User already exists. Please login.'}), 400
-
-        hashed_password = generate_password_hash(password)
-        new_user = User(public_id=str(uuid.uuid4()), name=name, email=email, password=hashed_password)
-
-        db.session.add(new_user)
-        db.session.commit()
-
-        return redirect(url_for('login'))
-
-    return render_template('register.html')
-
-@app.route('/dashboard')
-@token_required
-def dashboard(current_user):
-    return f"Welcome {current_user.name}! You are logged in."
-
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(debug=True)
+# Memastikan blok ini berjalan dengan benar
+if __name__ == "__main__":
+    # Membuat folder templates jika belum ada
+    if not os.path.exists('templates'):
+        os.makedirs('templates')
+    app.run(debug=True, port=5001)
