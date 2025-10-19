@@ -1,45 +1,103 @@
 from flask import Flask, request, jsonify
 import os
 import jwt
+import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
 
+# === Load konfigurasi dari .env ===
+load_dotenv()
 
 app = Flask(__name__)
+
+# Konfigurasi JWT
 SECRET = os.getenv('JWT_SECRET', 'supersecret123')
 ALGO = os.getenv('JWT_ALGORITHM', 'HS256')
+EXP_SECONDS = int(os.getenv('JWT_EXP_SECONDS', '900'))  # default 15 menit
+
+# In-memory user store sederhana
+USERS = {}
+NEXT_ID = 1
 
 
-# demo user data (id -> profile)
-PROFILES = {
-1: {'id': 1, 'name': 'Alice', 'email': 'alice@example.com'},
-2: {'id': 2, 'name': 'Bob', 'email': 'bob@example.com'}
-}
+# ======================
+# Endpoint: REGISTER
+# ======================
+@app.route("/register", methods=["POST"])
+def create_user():
+    global NEXT_ID
+    data = request.get_json()
+
+    username = data.get("username")
+    password = data.get("password")
+
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+
+    if username in USERS:
+        return jsonify({"error": "User already exists"}), 400
+
+    hashed_pw = generate_password_hash(password)
+    USERS[username] = {
+        "id": NEXT_ID,
+        "username": username,
+        "password": hashed_pw
+    }
+    NEXT_ID += 1
+
+    return jsonify({
+        "message": "User created successfully",
+        "user": {"id": NEXT_ID - 1, "username": username}
+    }), 201
 
 
-def verify_token_from_header():
-    auth = request.headers.get('Authorization', '')
-    if not auth.startswith('Bearer '):
-        return None, ('Missing or invalid Authorization header', 401)
-    token = auth.split(' ', 1)[1]
+# ======================
+# Endpoint: LOGIN
+# ======================
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json or {}
+    username = data.get('username')
+    password = data.get('password')
+
+    user = USERS.get(username)
+
+    if not user or not check_password_hash(user['password'], password):
+        return jsonify({'error': 'Invalid credentials'}), 401
+
+    payload = {
+        'sub': user['id'],
+        'username': username,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(seconds=EXP_SECONDS)
+    }
+
+    token = jwt.encode(payload, SECRET, algorithm=ALGO)
+
+    return jsonify({'access_token': token}), 200
+
+
+# ======================
+# Endpoint: VERIFY TOKEN (opsional)
+# ======================
+@app.route('/verify', methods=['POST'])
+def verify_token():
+    data = request.get_json()
+    token = data.get('token')
+
+    if not token:
+        return jsonify({'error': 'Token is required'}), 400
+
     try:
-        payload = jwt.decode(token, SECRET, algorithms=[ALGO])
-        return payload, None
+        decoded = jwt.decode(token, SECRET, algorithms=[ALGO])
+        return jsonify({'valid': True, 'data': decoded}), 200
     except jwt.ExpiredSignatureError:
-        return None, ('Token expired', 401)
-    except Exception:
-        return None, ('Token invalid', 401)
+        return jsonify({'error': 'Token expired'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'error': 'Invalid token'}), 401
 
 
-@app.route('/profile', methods=['GET'])
-def profile():
-    payload, err = verify_token_from_header()
-    if err:
-        return jsonify({'error': err[0]}), err[1]
-    user_id = payload.get('sub')
-    profile = PROFILES.get(user_id)
-    if not profile:
-        return jsonify({'error': 'profile not found'}), 404
-    return jsonify({'profile': profile})
-
-
+# ======================
+# Jalankan server
+# ======================
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.getenv('USER_PORT', 5001)), debug=True)
+    app.run(host='0.0.0.0', port=int(os.getenv('AUTH_PORT', 5000)), debug=True)
